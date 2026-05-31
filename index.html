@@ -524,6 +524,7 @@ function setSy(s){const d=document.getElementById('sdot'),l=document.getElementB
 let D={days:{},tasks:{},settings:{name:'',accent:'#c8f04d'}};
 let habits=new Set();
 let addTaskDefaultStatus='todo';
+let activeTimers={};  // taskId -> {start, elapsed, interval}
 
 const td=()=>new Date().toLocaleDateString('en-CA');
 const nt=()=>new Date().toLocaleTimeString('en-CA',{hour:'2-digit',minute:'2-digit'});
@@ -668,6 +669,31 @@ function addTyping(){const c=document.getElementById('aiMsgs');const d=document.
 function qp(text){document.getElementById('aiInp').value=text;sendAI();}
 
 // ─── KANBAN ───────────────────────────────────────────────────────────
+function fmtTaskTimer(ms){
+  const m=Math.floor(ms/60000),s=Math.floor((ms%60000)/1000);
+  return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+}
+function toggleTaskTimer(id){
+  if(!activeTimers[id])activeTimers[id]={start:Date.now(),elapsed:0,running:false};
+  const t=activeTimers[id];
+  if(t.running){
+    // pause
+    t.elapsed+=Date.now()-t.start;
+    t.running=false;
+    clearInterval(t.interval);
+    // save total time to task
+    const task=D.tasks[id];
+    if(task){task.totalTime=Math.round(t.elapsed/60000);fbPatch('tasks/'+id,{totalTime:task.totalTime});}
+  } else {
+    // start
+    t.start=Date.now();t.running=true;
+    t.interval=setInterval(()=>{
+      const el=document.getElementById('timer-'+id);
+      if(el){el.textContent=fmtTaskTimer(t.elapsed+(Date.now()-t.start));el.style.color='var(--green)';}
+    },1000);
+  }
+  renderKanban();
+}
 function openAddTask(status){addTaskDefaultStatus=status||'todo';document.getElementById('newTaskStatus').value=addTaskDefaultStatus;document.getElementById('taskModal').classList.add('open');setTimeout(()=>document.getElementById('newTaskName').focus(),100);}
 function closeModal(){document.getElementById('taskModal').classList.remove('open');document.getElementById('newTaskName').value='';}
 function addTask(){
@@ -676,7 +702,22 @@ function addTask(){
   const task={id,name,type:document.getElementById('newTaskType').value,status:document.getElementById('newTaskStatus').value,date:td(),created:nt()};
   D.tasks[id]=task;fbPatch('tasks',{[id]:task});renderKanban();closeModal();notify('Task added');
 }
-function moveTask(id,status){const t=D.tasks[id];if(t){t.status=status;fbPatch('tasks/'+id,{status});renderKanban();}}
+function moveTask(id,status){
+  const t=D.tasks[id];if(!t)return;
+  const now=Date.now();
+  if(status==='inprogress'&&!t.startTime){t.startTime=now;}
+  if(status==='done'){
+    t.completedAt=now;
+    if(t.startTime){t.elapsed=Math.round((now-t.startTime)/60000);}
+    else if(t.created){
+      // fallback: use created time string to estimate
+      t.elapsed=null;
+    }
+  }
+  t.status=status;
+  fbPatch('tasks/'+id,{status,startTime:t.startTime||null,completedAt:t.completedAt||null,elapsed:t.elapsed||null});
+  renderKanban();
+}
 function delTask(id){if(!confirm('Delete task?'))return;delete D.tasks[id];fbSet('tasks/'+id,null);renderKanban();}
 const typeClass={urgent:'type-urgent',admin:'type-admin',deadline:'type-deadline',study:'type-study',other:'type-other'};
 const typeLabel={urgent:'🔴 Urgent',admin:'📋 Admin',deadline:'⏰ Deadline',study:'📘 Study',other:'Other'};
